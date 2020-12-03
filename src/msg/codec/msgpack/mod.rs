@@ -16,7 +16,7 @@ pub fn encode<W: Write>(buf: &mut W, msg: &Message) -> Result<()> {
       write_u8(buf, *priority)?;
       write_bin(buf, params)?;
     }
-    _ => unimplemented!() // TODO
+    _ => unimplemented!(), // TODO
   }
   Ok(())
 }

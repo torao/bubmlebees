@@ -1,4 +1,5 @@
-use crate::msg::Message;
+use crate::error::Error;
+use crate::msg::{Message, MAX_LOSS_RATE, MAX_PAYLOAD_SIZE};
 use crate::test::SampleValues;
 
 #[test]
@@ -17,11 +18,14 @@ fn test_new_open() {
       assert_eq!(priority, p3);
       assert_eq!(params, p4);
     }
-    _ => assert!(false)
+    _ => assert!(false),
   }
 
-  // pipe_id に様々な値を設定
-  assert!(Message::new_open(0u16, function_id, priority, params.clone()).is_err());
+  // pipe_id に境界値を設定
+  assert_eq!(
+    Message::new_open(0u16, function_id, priority, params.clone()).unwrap_err(),
+    Error::ZeroPipeId
+  );
   assert!(Message::new_open(0xFFFFu16, function_id, priority, params.clone()).is_ok());
 }
 
@@ -39,10 +43,46 @@ fn test_new_close() {
       assert_eq!(failure, p2);
       assert_eq!(result, p3);
     }
-    _ => assert!(false)
+    _ => assert!(false),
   }
 
-  // pipe_id に様々な値を設定
-  assert!(Message::new_close(0u16, failure, result.clone()).is_err());
+  // pipe_id に境界値を設定
+  assert_eq!(Message::new_close(0u16, failure, result.clone()).unwrap_err(), Error::ZeroPipeId);
   assert!(Message::new_close(0xFFFFu16, failure, result.clone()).is_ok());
+}
+
+#[test]
+fn test_new_block() {
+  let mut sample = SampleValues::new(572194956990u64);
+
+  // 設定した値と同じ値が参照できる
+  let pipe_id = sample.next_u16();
+  let loss = sample.next_u8() & 0x7fu8;
+  let payload = sample.next_bytes(1024);
+  let eof = sample.next_bool();
+  match Message::new_block(pipe_id, eof, loss, payload.clone()).unwrap() {
+    Message::Block { pipe_id: p1, loss: p2, payload: p3, eof: p4 } => {
+      assert_eq!(pipe_id, p1);
+      assert_eq!(loss, p2);
+      assert_eq!(payload, p3);
+      assert_eq!(eof, p4);
+    }
+    _ => assert!(false),
+  }
+
+  // pipe_id に境界値を設定
+  assert_eq!(Message::new_block(0u16, eof, loss, payload.clone()).unwrap_err(), Error::ZeroPipeId);
+  assert!(Message::new_block(0xFFFFu16, eof, loss, payload.clone()).is_ok());
+
+  assert_eq!(
+    Message::new_block(pipe_id, eof, MAX_LOSS_RATE + 1, payload.clone()).unwrap_err(),
+    Error::LossRateTooBig { loss: (MAX_LOSS_RATE + 1) as usize, maximum: MAX_LOSS_RATE as usize }
+  );
+  assert_eq!(
+    Message::new_block(pipe_id, eof, loss, sample.next_bytes(MAX_PAYLOAD_SIZE + 1)).unwrap_err(),
+    Error::PayloadTooLarge {
+      length: (MAX_PAYLOAD_SIZE + 1) as usize,
+      maximum: MAX_PAYLOAD_SIZE as usize
+    }
+  );
 }

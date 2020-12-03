@@ -3,7 +3,7 @@ pub mod msgpack;
 /**
 シリアライズした 1 メッセージの最大バイナリ長です。IPv4 のデータ部最大長である 65,507 を表します。
 */
-pub const MAX_MESSAGE_SIZE:usize = 65507;
+pub const MAX_MESSAGE_SIZE: usize = 65507;
 
 /*
 メッセージのシリアライズとデシリアライズを行うためのクラスです。

@@ -8,6 +8,12 @@ pub mod codec;
 #[cfg(test)]
 mod test;
 
+/// Block のペイロードに設定することのできる最大サイズです。0xEFFF (61,439バイト) を表しています。
+pub const MAX_PAYLOAD_SIZE: usize = 0xEFFF;
+
+/// Block の消失確率に設定することのできる最大値です。0x7F (127) を表しています。
+pub const MAX_LOSS_RATE: u8 = 0x7F;
+
 #[derive(Debug)]
 pub enum Message {
   /// 特定のファンクションに対するパイプをオープンするためのメッセージ。
@@ -38,6 +44,9 @@ pub enum Message {
     /// このメッセージの宛先を示すパイプ ID。
     pipe_id: u16,
 
+    /// このブロックが EOF を表すかのフラグ。
+    eof: bool,
+
     /// 転送中にこの Block を消失さても良い確率を示す 0～127 までの値。このフィールドはアプリケーションやネットワークの
     /// 過負荷によってすべての Block を処理できなくなったときに参照されます。値 0 (デフォルト) はどのような状況であっても
     /// このブロックを消失させてはならないことを表し、127 は 100% の消失が発生しても良いことを示しています。Block が EOF
@@ -50,9 +59,6 @@ pub enum Message {
 
     /// このブロックが転送するデータ。
     payload: Vec<u8>,
-
-    /// このブロックが EOF を表すかのフラグ。
-    eof: bool,
   },
 
   Control,
@@ -69,23 +75,17 @@ impl Message {
     Ok(Message::Close { pipe_id, failure, result })
   }
 
-  pub fn new_block(pipe_id: u16, loss: u8, payload: Vec<u8>, eof: bool) -> Result<Self> {
+  pub fn new_block(pipe_id: u16, eof: bool, loss: u8, payload: Vec<u8>) -> Result<Self> {
     verify_pipe_id(pipe_id)?;
     if payload.len() > MAX_PAYLOAD_SIZE {
       Err(Error::PayloadTooLarge { length: payload.len(), maximum: MAX_PAYLOAD_SIZE })
     } else if loss > MAX_LOSS_RATE {
       Err(Error::LossRateTooBig { loss: loss as usize, maximum: MAX_LOSS_RATE as usize })
     } else {
-      Ok(Message::Block { pipe_id, loss, payload, eof })
+      Ok(Message::Block { pipe_id, eof, loss, payload })
     }
   }
 }
-
-/// Block のペイロードに設定することのできる最大サイズです。0xEFFF (61,439バイト) を表しています。
-pub const MAX_PAYLOAD_SIZE: usize = 0xEFFF;
-
-/// Block の消失確率に設定することのできる最大値です。0x7F (127) を表しています。
-pub const MAX_LOSS_RATE: u8 = 0x7F;
 
 pub enum Control {
   SystemConfig {
@@ -102,7 +102,7 @@ pub enum Control {
     ping_interval: u32,
     /** セッションタイムアウトまでの間隔 (秒)。 */
     session_timeout: u32,
-  }
+  },
 }
 
 fn verify_pipe_id(pipe_id: u16) -> Result<()> {
