@@ -1,6 +1,6 @@
 # Bubmlebees
 
-Bumblebees is a lightweight protocol framework for a RPC, streaming and event sourcing designed for asynchronous and
+Bumblebees is a lightweight protocol framework for an RPC, message exchange, streaming and event sourcing designed for asynchronous and
 reactive-oriented applications.
 
 ## License
