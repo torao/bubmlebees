@@ -1,10 +1,11 @@
 use std::io::Cursor;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::error::Error;
-use crate::msg::{Block, Close, Control, Open, MAX_LOSS_RATE, MAX_PAYLOAD_SIZE};
-use crate::test::SampleValues;
 use uuid::Uuid;
+
+use crate::error::Error;
+use crate::msg::{Block, Close, Control, MAX_LOSS_RATE, MAX_PAYLOAD_SIZE, Open};
+use crate::test::SampleValues;
 
 #[test]
 fn test_open_new() {
@@ -171,7 +172,7 @@ fn test_control_new_system_config() {
     ping_interval,
     session_timeout,
   )
-  .unwrap()
+    .unwrap()
   {
     assert_eq!(version, p1);
     assert_eq!(node_id, p2);
@@ -196,7 +197,7 @@ fn test_control_system_config_read_write() {
     5u32,
     6u32,
   )
-  .unwrap();
+    .unwrap();
   sys_config.write_to(&mut buf).unwrap();
   assert_eq!(
     &[
@@ -211,6 +212,39 @@ fn test_control_system_config_read_write() {
   // 復元したメッセージが元の値と一致しているか
   let restored = Control::read_from(&mut Cursor::new(&buf[..])).unwrap();
   assert_eq!(sys_config, restored);
+
+  // 未完成のバッファを検出できるか
+  for i in 0..(buf.len() - 1) {
+    assert_eq!(
+      Error::BufferUnsatisfied,
+      Control::read_from(&mut Cursor::new(&buf[0..i])).unwrap_err()
+    );
+  }
+}
+
+#[test]
+fn test_control_new_ping() {
+
+  // 設定した値と同じ値が参照できる
+  let utc_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros() as u64;
+  if let Control::Ping { utc_time: p1 } = Control::new_ping(utc_time).unwrap() {
+    assert_eq!(utc_time, p1);
+  } else {
+    assert!(false);
+  }
+}
+
+#[test]
+fn test_control_ping_read_write() {
+  // バイナリ表現が想定と一致しているか
+  let mut buf = Vec::new();
+  let ping = Control::new_ping(1u64).unwrap();
+  ping.write_to(&mut buf).unwrap();
+  assert_eq!(&['P' as u8, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00][..], buf);
+
+  // 復元したメッセージが元の値と一致しているか
+  let restored = Control::read_from(&mut Cursor::new(&buf[..])).unwrap();
+  assert_eq!(ping, restored);
 
   // 未完成のバッファを検出できるか
   for i in 0..(buf.len() - 1) {
