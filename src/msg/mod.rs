@@ -237,6 +237,13 @@ impl Control {
   }
 }
 
+pub enum Message {
+  Open(Open),
+  Close(Close),
+  Block(Block),
+  Control(Control),
+}
+
 fn verify_pipe_id(pipe_id: u16) -> Result<()> {
   if pipe_id == 0 {
     Err(Error::ZeroPipeId)

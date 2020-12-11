@@ -1,3 +1,5 @@
+use std::sync::PoisonError;
+
 use thiserror::Error as ThisError;
 
 #[derive(ThisError, Debug, PartialEq, Eq)]
@@ -27,6 +29,18 @@ pub enum Error {
                      // source: std::io::Error,
                      // backtrace: std::backtrace::Backtrace
   },
+
+  #[error("message queue overflowed: {capacity:?}")]
+  MessageQueueOverflow { capacity: usize },
+  #[error("lock failed: {message}")]
+  Lock { message: String },
+
+  #[error("unsupported protocol was specified: {url:?}")]
+  UnsupportedProtocol { url: String },
+  #[error("host is not specified in url: {url}")]
+  HostNotSpecifiedInUrl { url: String },
+  #[error("malformed url: {message}")]
+  MalformedUrl { kind: url::ParseError, message: String },
 }
 
 impl From<std::io::Error> for Error {
@@ -36,5 +50,17 @@ impl From<std::io::Error> for Error {
     } else {
       Error::Io { kind: err.kind(), message: err.to_string() }
     }
+  }
+}
+
+impl From<url::ParseError> for Error {
+  fn from(err: url::ParseError) -> Self {
+    Error::MalformedUrl { kind: err, message: err.to_string() }
+  }
+}
+
+impl<T> From<PoisonError<T>> for Error {
+  fn from(err: PoisonError<T>) -> Self {
+    Error::Lock { message: err.to_string() }
   }
 }

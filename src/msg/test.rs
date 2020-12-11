@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 use crate::error::Error;
-use crate::msg::{Block, Close, Control, MAX_LOSS_RATE, MAX_PAYLOAD_SIZE, Open};
+use crate::msg::{Block, Close, Control, Open, MAX_LOSS_RATE, MAX_PAYLOAD_SIZE};
 use crate::test::SampleValues;
 
 #[test]
@@ -172,7 +172,7 @@ fn test_control_new_system_config() {
     ping_interval,
     session_timeout,
   )
-    .unwrap()
+  .unwrap()
   {
     assert_eq!(version, p1);
     assert_eq!(node_id, p2);
@@ -197,7 +197,7 @@ fn test_control_system_config_read_write() {
     5u32,
     6u32,
   )
-    .unwrap();
+  .unwrap();
   sys_config.write_to(&mut buf).unwrap();
   assert_eq!(
     &[
@@ -224,7 +224,6 @@ fn test_control_system_config_read_write() {
 
 #[test]
 fn test_control_new_ping() {
-
   // 設定した値と同じ値が参照できる
   let utc_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros() as u64;
   if let Control::Ping { utc_time: p1 } = Control::new_ping(utc_time).unwrap() {
