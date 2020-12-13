@@ -2,6 +2,7 @@ use std::future::Future;
 use std::net::TcpListener;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::task::{Context, Poll};
 use std::thread::{JoinHandle, spawn};
 
@@ -17,52 +18,54 @@ pub struct WsServer {
   url: Url,
   address: String,
   server: TcpListener,
-  handle: Arc<JoinHandle<()>>,
+  closed: AtomicBool,
 }
 
 impl WsServer {
-  pub fn listen(&mut self) -> WsFuture {
-    unimplemented!()
-  }
-}
+  pub fn listen<F: Future<Output=Result<WsServer>>>(name: &str, url: Url) -> F {
 
-struct WsFuture {
-  server: Arc<WsServer>,
-}
-
-impl Future for WsFuture {
-  type Output = Result<()>;
-
-  fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-
-    // バインドアドレスを取得
-    let host = self.server.url.host_str();
-    let port = self.server.url.port();
+    // バインドアドレスを構築
+    let host = url.host_str();
+    let port = url.port();
     let address = if let (Some(host), Some(port)) = (host, port) {
       format!("{0}:{1}", host, port)
     } else {
-      return Poll::Ready(Err(Error::HostNotSpecifiedInUrl { url: self.server.url.to_string() }));
+      return Poll::Ready(Err(Error::HostNotSpecifiedInUrl { url: url.to_string() }));
     };
 
-    // バインドの実行
-    let name = &self.server.name;
-    log::debug!("{} is trying to start a WebSocket service at address: {}", name, address);
-    let server = match TcpListener::bind(&address) {
-      Ok(server) => server,
-      Err(err) => return Poll::Ready(Err(From::from(err)))
-    };
-    log::info!("{} has started a WebSocket service at address: {}", name,
-               server.local_addr().map(|addr| format!("{}:{}", addr.ip().to_string(), addr.port()).to_string()).unwrap_or(address));
+    // 非同期で bind して WebSocket サーバとして返す
+    async {
+      log::debug!("{} is trying to start a WebSocket service at address: {}", name, address);
+      let server = match TcpListener::bind(&address) {
+        Ok(server) => server,
+        Err(err) => {
+          log::error!("{} was failed to start a WebSocket service at address: {}", name, address);
+          return Err(From::from(err));
+        }
+      };
+      let address = server.local_addr()
+        .map(|addr| format!("{}:{}", addr.ip().to_string(), addr.port()).to_string())
+        .unwrap_or(address);
+      log::info!("{} has started a WebSocket service at address: {}", name, address);
+      Ok(WsServer { name: name.to_string(), url, address, server, closed: AtomicBool::new(false) })
+    }
+  }
 
+  pub fn close(&mut self) -> () {
+    if self.closed.compare_and_swap(false, true) {
+      self.server
+    }
+  }
+
+  pub fn accept(&mut self) -> () {
     // TODO It should be possible to specify threads or thread pools externally.
-    self.server.handle = Arc::new(spawn(move || loop {
-      match server.accept() {
+    Arc::new(spawn(move || loop {
+      match self.server.accept() {
         Ok((stream, addr)) => {}
         Err(err) => {
           break;
         }
       }
     }));
-    Poll::Ready(Ok(()))
   }
 }
