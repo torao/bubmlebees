@@ -1,27 +1,29 @@
+use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 
+use async_trait::async_trait;
 use url::Url;
 
 use crate::error::Error;
 use crate::msg::Message;
 use crate::Result;
-use std::net::SocketAddr;
 
 pub mod io;
 pub mod tcp;
 pub mod ws;
-
 #[cfg(test)]
 mod test;
 
 /// 非同期メッセージング API
+#[async_trait]
+pub trait Bridge<SERVER: Server> {
+  fn name(&self) -> &'static str;
 
-pub trait Bridge {
   ///  指定されたリモートノードに対して非同期接続を行い `Wire` の Future を返します。
   fn new_wire<W: Wire>(&mut self) -> Result<W>;
 
   /// 指定されたネットワークからの接続を非同期で受け付ける `Server` の Future を返します。
-  fn new_server<S: Server>(&mut self, bind_address:SocketAddr) -> Result<S>;
+  async fn start_server(&mut self, url: &Url) -> Result<SERVER>;
 }
 
 pub trait Wire {
@@ -39,6 +41,8 @@ pub trait Wire {
 }
 
 pub trait Server {
+  /// このサーバに接続するためのアドレスを参照します。
+  fn local_address(&self) -> Result<String>;
   fn close(&mut self) -> Result<()>;
 }
 

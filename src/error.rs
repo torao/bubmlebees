@@ -22,12 +22,12 @@ pub enum Error {
   Io {
     kind: std::io::ErrorKind,
     message: String, // TODO use of unstable library feature 'backtrace'
-                     // TODO see issue #53487 <https://github.com/rust-lang/rust/issues/53487> for more information
-                     // #[source]
-                     // source: std::io::Error
-                     // #[from]
-                     // source: std::io::Error,
-                     // backtrace: std::backtrace::Backtrace
+    // TODO see issue #53487 <https://github.com/rust-lang/rust/issues/53487> for more information
+    // #[source]
+    // source: std::io::Error
+    // #[from]
+    // source: std::io::Error,
+    // backtrace: std::backtrace::Backtrace
   },
 
   #[error("message queue overflowed: {capacity:?}")]
@@ -41,6 +41,10 @@ pub enum Error {
   HostNotSpecifiedInUrl { url: String },
   #[error("malformed url: {message}")]
   MalformedUrl { kind: url::ParseError, message: String },
+
+  // TCP レイヤー
+  #[error("the number of sockets in use has been reached maximum {maximum}")]
+  TooManySockets { maximum: usize },
 }
 
 impl From<std::io::Error> for Error {
