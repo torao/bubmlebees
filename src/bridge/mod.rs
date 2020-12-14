@@ -5,6 +5,7 @@ use url::Url;
 use crate::error::Error;
 use crate::msg::Message;
 use crate::Result;
+use std::net::SocketAddr;
 
 pub mod io;
 pub mod tcp;
@@ -17,28 +18,28 @@ mod test;
 
 pub trait Bridge {
   ///  指定されたリモートノードに対して非同期接続を行い `Wire` の Future を返します。
-  fn new_wire<W: Wire>() -> Box<W>;
+  fn new_wire<W: Wire>(&mut self) -> Result<W>;
 
   /// 指定されたネットワークからの接続を非同期で受け付ける `Server` の Future を返します。
-  fn new_server<S: Server>() -> Box<S>;
+  fn new_server<S: Server>(&mut self, bind_address:SocketAddr) -> Result<S>;
 }
 
 pub trait Wire {
   /// この Wire のローカル側アドレスを参照します。
-  fn local_address() -> String;
+  fn local_address(&self) -> Result<SocketAddr>;
 
   /// この Wire のリモート側アドレスを参照します。
-  fn remote_address() -> String;
+  fn remote_address(&self) -> Result<SocketAddr>;
 
   /// こちらの端点が接続を受け付けた側である場合に true を返します。
   /// プロトコル上の役割を決める必要がある場合に使用することができます。
-  fn is_server() -> bool;
+  fn is_server(&self) -> bool;
 
-  fn close() -> Result<()>;
+  fn close(&mut self) -> Result<()>;
 }
 
 pub trait Server {
-  fn close() -> Result<()>;
+  fn close(&mut self) -> Result<()>;
 }
 
 pub fn create(url: &str) -> Result<()> {
