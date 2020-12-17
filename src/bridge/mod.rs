@@ -42,7 +42,7 @@ pub trait Wire {
 
 pub trait Server {
   /// このサーバに接続するためのアドレスを参照します。
-  fn local_address(&self) -> Result<String>;
+  fn url(&self) -> &str;
   fn close(&mut self) -> Result<()>;
 }
 

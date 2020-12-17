@@ -1,3 +1,4 @@
+use std::net::AddrParseError;
 use std::sync::PoisonError;
 
 use thiserror::Error as ThisError;
@@ -45,6 +46,8 @@ pub enum Error {
   // TCP レイヤー
   #[error("the number of sockets in use has been reached maximum {maximum}")]
   TooManySockets { maximum: usize },
+  #[error("invalid socket address: {message}")]
+  InvalidSocketAddress { kind: AddrParseError, message: String },
 }
 
 impl From<std::io::Error> for Error {
@@ -60,6 +63,13 @@ impl From<std::io::Error> for Error {
 impl From<url::ParseError> for Error {
   fn from(err: url::ParseError) -> Self {
     Error::MalformedUrl { kind: err, message: err.to_string() }
+  }
+}
+
+impl From<std::net::AddrParseError> for Error {
+  fn from(err: AddrParseError) -> Self {
+    let message = err.to_string();
+    Error::InvalidSocketAddress { kind: err, message }
   }
 }
 

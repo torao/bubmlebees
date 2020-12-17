@@ -1,110 +1,30 @@
-use std::collections::HashMap;
 use std::net::{Shutdown, SocketAddr};
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread::{JoinHandle, spawn};
-use std::time::Duration;
 
 use async_trait::async_trait;
 use log;
-use mio::{Events, Interest, Poll, Token};
 use mio::net::{TcpListener, TcpStream};
 use url::Url;
 
 use crate::bridge::{Bridge, Server, Wire};
-use crate::error::Error;
+use crate::bridge::io::dispatcher::{Dispatcher, DispatcherRegister};
 use crate::Result;
 
 #[cfg(test)]
 mod test;
 
-struct TokenMap<T> {
-  next: usize,
-  values: HashMap<usize, T>,
-}
-
-impl<T> TokenMap<T> {
-  pub fn new() -> TokenMap<T> {
-    TokenMap { next: 0, values: HashMap::new() }
-  }
-  pub fn get(&self, index: usize) -> Option<&T> {
-    self.values.get(&index)
-  }
-  pub fn add(&mut self, value: T) -> Result<usize> {
-    if self.values.len() == std::usize::MAX {
-      return Err(Error::TooManySockets { maximum: std::usize::MAX });
-    }
-    // NOTE token cannot be Token(usize::MAX) as it is reserved for internal usage.
-    for i in 0..std::usize::MAX {
-      let index = (self.next as u64 + i as u64) as usize;
-      if self.values.get(&index).is_none() {
-        self.values.insert(index, value);
-        return Ok(index);
-      }
-    }
-    unreachable!()
-  }
-  pub fn remove(&mut self, index: usize) -> Option<T> {
-    self.values.remove(&index)
-  }
-}
-
-enum TcpSocket {
-  Stream(TcpStream),
-  Listener(TcpListener),
-}
-
 pub struct TcpBridge {
-  poll: Arc<Mutex<Poll>>,
-  event_dispatcher: JoinHandle<Result<()>>,
-  is_closed: Arc<AtomicBool>,
-  sockets: Arc<TokenMap<TcpSocket>>,
+  dispatcher: Dispatcher,
 }
 
 impl TcpBridge {
   pub fn new(event_buffer_size: usize) -> Result<TcpBridge> {
-    let poll = Arc::new(Mutex::new(Poll::new()?));
-    let cloned_poll = poll.clone();
-    let is_closed = Arc::new(AtomicBool::new(false));
-    let cloned_is_closed = is_closed.clone();
-    let sockets = Arc::new(TokenMap::new());
-    let cloned_sockets = sockets.clone();
-    let event_dispatcher = spawn(move || {
-      TcpBridge::start_event_loop(cloned_is_closed, cloned_poll, cloned_sockets, event_buffer_size)
-    });
-    Ok(TcpBridge { poll, event_dispatcher, is_closed, sockets })
+    Ok(TcpBridge {
+      dispatcher: Dispatcher::new(event_buffer_size)?
+    })
   }
 
-  pub fn stop(&mut self) -> () {
-    if self.is_closed.compare_and_swap(false, true, Ordering::Relaxed) {
-      log::info!("stopping TCP bridge...");
-      // TODO 残っているすべてのソケットをクローズ
-    }
-    self.event_dispatcher.interr
-  }
-
-  fn start_event_loop(is_closed: Arc<AtomicBool>, poll: Arc<Mutex<Poll>>, tokens: Arc<TokenMap<TcpSocket>>, event_buffer_size: usize) -> Result<()> {
-    let mut events = Events::with_capacity(event_buffer_size);
-    while is_closed.load(Ordering::Relaxed) {
-      let sockets = {
-        let mut poll = poll.lock()?;
-        poll.poll(&mut events, Some(Duration::from_secs(1)))?;
-        let tokens = tokens.clone();
-        events.iter().map(|e| tokens.get(e.token().0)).collect::<Vec<TcpSocket>>()
-      };
-      for socket in sockets.iter() {
-        match socket {
-          TcpSocket::Stream(stream) => {
-            log::info!("CLIENT");
-          }
-          TcpSocket::Listener(listener) => {
-            log::info!("SERVER");
-          }
-          _ => unreachable!()
-        }
-      }
-    }
-    Ok(())
+  pub fn stop(&mut self) -> Result<()> {
+    self.dispatcher.stop()
   }
 }
 
@@ -130,17 +50,13 @@ impl Bridge<TcpServer> for TcpBridge {
     let bind_address = bind_address.parse()?;
 
     // 新しい TcpListener の登録
-    let id = {
-      let mut listener = TcpListener::bind(bind_address)?;
-      let poll = self.poll.lock()?;
-      let id = self.sockets.add(TcpSocket::Listener(listener))?;
-      poll.registry()
-        .register(&mut listener, Token(id), Interest::READABLE)
-        .map_err(From::from);
-      id
-    };
+    let listener = TcpListener::bind(bind_address)?;
+    let url = listener.local_addr()
+      .map(|addr| format!("{}://{}", self.name(), addr.to_string()))
+      .unwrap_or("<unknown>".to_string());
+    let id = self.dispatcher.register(listener)?;
 
-    Ok(TcpServer { id, local_address: lis })
+    Ok(TcpServer { id, url })
   }
 }
 
@@ -169,12 +85,12 @@ impl Wire for TcpWire {
 
 struct TcpServer {
   id: usize,
-  local_address: Result<String>,
+  url: String,
 }
 
 impl Server for TcpServer {
-  fn local_address(&self) -> Result<String> {
-    self.server.local_addr().map(|addr| format!("tcp://{}", addr.to_string())).map_err(From::from)
+  fn url(&self) -> &str {
+    &self.url
   }
   fn close(&mut self) -> Result<()> {
     unimplemented!()

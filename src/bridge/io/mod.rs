@@ -1,3 +1,5 @@
+pub mod dispatcher;
+
 use std::sync::{Arc, RwLock};
 
 use crate::error::Error;
