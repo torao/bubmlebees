@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::net::{Shutdown, SocketAddr};
 
 use async_trait::async_trait;
@@ -5,8 +6,8 @@ use log;
 use mio::net::{TcpListener, TcpStream};
 use url::Url;
 
+use crate::bridge::io::dispatcher::Dispatcher;
 use crate::bridge::{Bridge, Server, Wire};
-use crate::bridge::io::dispatcher::{Dispatcher, DispatcherRegister};
 use crate::Result;
 
 #[cfg(test)]
@@ -18,12 +19,11 @@ pub struct TcpBridge {
 
 impl TcpBridge {
   pub fn new(event_buffer_size: usize) -> Result<TcpBridge> {
-    Ok(TcpBridge {
-      dispatcher: Dispatcher::new(event_buffer_size)?
-    })
+    Ok(TcpBridge { dispatcher: Dispatcher::new(event_buffer_size)? })
   }
 
-  pub fn stop(&mut self) -> Result<()> {
+  pub fn stop(&mut self) -> Box<dyn Future<Output = Result<usize>>> {
+    log::debug!("stopping TCP bridge...");
     self.dispatcher.stop()
   }
 }
@@ -51,10 +51,12 @@ impl Bridge<TcpServer> for TcpBridge {
 
     // 新しい TcpListener の登録
     let listener = TcpListener::bind(bind_address)?;
-    let url = listener.local_addr()
+    let url = listener
+      .local_addr()
       .map(|addr| format!("{}://{}", self.name(), addr.to_string()))
       .unwrap_or("<unknown>".to_string());
-    let id = self.dispatcher.register(listener)?;
+    // let id = self.dispatcher.register(listener)?;
+    let id = 100usize;
 
     Ok(TcpServer { id, url })
   }
@@ -96,7 +98,6 @@ impl Server for TcpServer {
     unimplemented!()
   }
 }
-
 
 /*
 pub struct Server {

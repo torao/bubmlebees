@@ -10,9 +10,9 @@ use crate::Result;
 
 pub mod io;
 pub mod tcp;
-pub mod ws;
 #[cfg(test)]
 mod test;
+pub mod ws;
 
 /// 非同期メッセージング API
 #[async_trait]
