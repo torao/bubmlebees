@@ -1,4 +1,3 @@
-use std::future::Future;
 use std::net::{Shutdown, SocketAddr};
 
 use async_trait::async_trait;
@@ -19,12 +18,8 @@ pub struct TcpBridge {
 
 impl TcpBridge {
   pub fn new(event_buffer_size: usize) -> Result<TcpBridge> {
+    log::debug!("starting TCP bridge...");
     Ok(TcpBridge { dispatcher: Dispatcher::new(event_buffer_size)? })
-  }
-
-  pub fn stop(&mut self) -> Box<dyn Future<Output = Result<usize>>> {
-    log::debug!("stopping TCP bridge...");
-    self.dispatcher.stop()
   }
 }
 

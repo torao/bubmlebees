@@ -5,7 +5,6 @@ use std::net::SocketAddr;
 use std::ops::DerefMut;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::task::{Context, Waker};
 use std::thread::spawn;
@@ -17,6 +16,9 @@ use mio::net::{TcpListener, TcpStream};
 
 use crate::error::Error;
 use crate::Result;
+
+#[cfg(test)]
+mod test;
 
 /// TcpStream にイベントが発生したときに呼び出されるコールバック用のトレイトです。
 /// 返値を使用してその後のアクションを指定することができます。
@@ -93,41 +95,34 @@ pub type SocketId = usize;
 
 pub struct Dispatcher {
   sender: Sender<Task<Result<SocketId>>>,
-  closed: AtomicBool,
   waker: mio::Waker,
 }
 
-impl Drop for Dispatcher {
-  #[warn(unused_must_use)]
-  fn drop(&mut self) {
-    self.stop();
-  }
-}
-
 impl Dispatcher {
+  /// 新しいディスパッチャーを起動します。
+  /// poll が作成されイベントループが開始します。
+  ///
+  /// # Arguments
+  /// * `event_buffer_size` - 一度の poll で読み込むイベントの最大数。
+  ///
   pub fn new(event_buffer_size: usize) -> Result<Dispatcher> {
     let (sender, receiver) = channel();
     let poll = Poll::new()?;
     let waker = mio::Waker::new(poll.registry(), Token(0))?;
     let mut polling_loop = PollingLoop::new(poll, event_buffer_size);
     spawn(move || polling_loop.start(receiver));
-    let closed = AtomicBool::new(false);
-    Ok(Dispatcher { sender, closed, waker })
+    Ok(Dispatcher { sender, waker })
   }
 
-  pub fn stop(&mut self) -> Box<dyn Future<Output=Result<SocketId>>> {
-    if self.closed.compare_and_swap(false, true, Ordering::SeqCst) {
-      log::debug!("stopping dispatcher...");
-      self.run_in_event_loop(Box::new(move |polling: &mut PollingLoop| {
-        polling.closed = true;
-        Ok(0usize)
-      }))
-    } else {
-      Box::new(std::future::ready(Ok(0usize)))
-    }
+  /// 指定された ID のソケットを
+  pub fn dispose(&self, id: SocketId) -> Box<dyn Future<Output=Result<SocketId>>> {
+    self.run_in_event_loop(Box::new(move |polling: &mut PollingLoop| {
+      polling.close(id);
+      Ok(id)
+    }))
   }
 
-  fn run_in_event_loop<E>(&mut self, exec: Box<E>) -> Box<dyn Future<Output=Result<SocketId>>>
+  fn run_in_event_loop<E>(&self, exec: Box<E>) -> Box<dyn Future<Output=Result<SocketId>>>
     where
       E: (FnOnce(&mut PollingLoop) -> Result<SocketId>) + Send + 'static,
   {
@@ -139,24 +134,72 @@ impl Dispatcher {
   }
 }
 
+impl Drop for Dispatcher {
+  fn drop(&mut self) {
+    log::debug!("stopping dispatcher...");
+    let _ = self.run_in_event_loop(Box::new(move |polling: &mut PollingLoop| {
+      polling.stopped = true;
+      Ok(0usize)
+    }));
+  }
+}
+
+trait DispatcherRegister<S, L> {
+  fn register(&self, source: S, listener: L) -> Box<dyn Future<Output=Result<SocketId>>>;
+}
+
+impl DispatcherRegister<TcpListener, Box<dyn TcpListenerListener>> for Dispatcher {
+  fn register(
+    &self,
+    mut listener: TcpListener,
+    event_listener: Box<dyn TcpListenerListener>,
+  ) -> Box<dyn Future<Output=Result<SocketId>>> {
+    self.run_in_event_loop(Box::new(move |polling: &mut PollingLoop| {
+      let id = polling.sockets.available_id()?;
+      polling.poll.registry().register(&mut listener, Token(id), Interest::READABLE)?;
+      polling.sockets.set(id, Socket::Listener(listener, event_listener));
+      Ok(id)
+    }))
+  }
+}
+
+impl DispatcherRegister<TcpStream, Box<dyn TcpStreamListener>> for Dispatcher {
+  fn register(
+    &self,
+    mut stream: TcpStream,
+    listener: Box<dyn TcpStreamListener>,
+  ) -> Box<dyn Future<Output=Result<SocketId>>> {
+    self.run_in_event_loop(Box::new(move |polling: &mut PollingLoop| {
+      let id = polling.sockets.available_id()?;
+      polling.poll.registry().register(
+        &mut stream,
+        Token(id),
+        Interest::READABLE | Interest::WRITABLE,
+      )?;
+      polling.sockets.set(id, Socket::Stream(stream, listener));
+      Ok(id)
+    }))
+  }
+}
+
 struct PollingLoop {
   poll: Poll,
   event_buffer_size: usize,
   sockets: SocketMap,
-  closed: bool,
+  stopped: bool,
 }
 
 impl PollingLoop {
   fn new(poll: Poll, event_buffer_size: usize) -> PollingLoop {
     let sockets = SocketMap::new();
-    PollingLoop { poll, event_buffer_size, sockets, closed: false }
+    PollingLoop { poll, event_buffer_size, sockets, stopped: false }
   }
 
   /// poll() のためのイベントループを開始します。イベントループスレッドの中で任意の処理を行う場合は receiver に対応
   /// する sender に実行するタスクを投入し、self.poll に登録済みの Waker.wake() でブロッキングを抜けます。
   fn start<R>(&mut self, receiver: Receiver<Task<Result<R>>>) -> Result<()> {
     let mut events = Events::with_capacity(self.event_buffer_size);
-    while !self.closed {
+    while !self.stopped {
       self.poll.poll(&mut events, None)?;
 
       // イベントの発生したソケットを取得
@@ -273,44 +316,6 @@ impl PollingLoop {
       let behaviour = event_listener.on_accept(stream, address);
       self.action(event.token().0, listener, behaviour);
     }
-  }
-}
-
-trait DispatcherRegister<S, L> {
-  fn register(&mut self, source: S, listener: L) -> Box<dyn Future<Output=Result<SocketId>>>;
-}
-
-impl DispatcherRegister<TcpListener, Box<dyn TcpListenerListener>> for Dispatcher {
-  fn register(
-    &mut self,
-    mut listener: TcpListener,
-    event_listener: Box<dyn TcpListenerListener>,
-  ) -> Box<dyn Future<Output=Result<SocketId>>> {
-    self.run_in_event_loop(Box::new(move |polling: &mut PollingLoop| {
-      let id = polling.sockets.available_id()?;
-      polling.poll.registry().register(&mut listener, Token(id), Interest::READABLE)?;
-      polling.sockets.set(id, Socket::Listener(listener, event_listener));
-      Ok(id)
-    }))
-  }
-}
-
-impl DispatcherRegister<TcpStream, Box<dyn TcpStreamListener>> for Dispatcher {
-  fn register(
-    &mut self,
-    mut stream: TcpStream,
-    listener: Box<dyn TcpStreamListener>,
-  ) -> Box<dyn Future<Output=Result<SocketId>>> {
-    self.run_in_event_loop(Box::new(move |polling: &mut PollingLoop| {
-      let id = polling.sockets.available_id()?;
-      polling.poll.registry().register(
-        &mut stream,
-        Token(id),
-        Interest::READABLE | Interest::WRITABLE,
-      )?;
-      polling.sockets.set(id, Socket::Stream(stream, listener));
-      Ok(id)
-    }))
   }
 }
 
